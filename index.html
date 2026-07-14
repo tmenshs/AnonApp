@@ -80,7 +80,7 @@ registerBtn.addEventListener('click', async () => {
     const result = await callApi({ action: 'register', name, email, password });
     if (result.success) {
       setSession(result.userId, result.name);
-      const personalLink = window.location.origin + window.location.pathname.replace('register.html', '') + 'send.html?to=' + result.userId;
+      const personalLink = window.location.origin + window.location.pathname.replace('index.html', '') + 'send.html?to=' + result.userId;
       document.getElementById('linkOutput').value = personalLink;
       document.getElementById('formCard').style.display = 'none';
       document.getElementById('resultCard').style.display = 'block';
