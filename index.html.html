@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Get your link — TechTmn Anon</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="wrap">
+  <div class="brand">
+    <div class="mark">TechTmn</div>
+    <h1>Get your anonymous inbox</h1>
+  </div>
+
+  <div class="card" id="formCard">
+    <div class="anon-badge"><span class="dot"></span> messages hide the sender, not from us</div>
+    <p class="subtitle">Register once, get a personal link. Share it anywhere — replies show up in your inbox with no name attached.</p>
+
+    <label for="name">Your name</label>
+    <input id="name" type="text" placeholder="Jotham" autocomplete="name">
+
+    <label for="email">Email</label>
+    <input id="email" type="email" placeholder="you@email.com" autocomplete="email">
+
+    <label for="password">Password</label>
+    <input id="password" type="password" placeholder="At least 6 characters" autocomplete="new-password">
+
+    <button id="registerBtn">Create my link</button>
+    <div class="msg" id="statusMsg"></div>
+  </div>
+
+  <div class="card" id="resultCard" style="display:none; margin-top:16px;">
+    <p class="subtitle" style="margin-bottom:10px;">Your personal link is ready. Share it — anyone can send you a message anonymously.</p>
+    <div class="link-row">
+      <input id="linkOutput" type="text" readonly>
+      <button id="copyBtn" class="secondary">Copy</button>
+    </div>
+    <button id="goInboxBtn">Go to my inbox</button>
+  </div>
+
+  <div class="footer-links">
+    Already registered? <a href="login.html">Log in</a>
+  </div>
+</div>
+
+<script src="config.js"></script>
+<script>
+const statusMsg = document.getElementById('statusMsg');
+const registerBtn = document.getElementById('registerBtn');
+
+function showMsg(text, type) {
+  statusMsg.textContent = text;
+  statusMsg.className = 'msg show ' + type;
+}
+
+registerBtn.addEventListener('click', async () => {
+  const name = document.getElementById('name').value.trim();
+  const email = document.getElementById('email').value.trim();
+  const password = document.getElementById('password').value;
+
+  if (!name || !email || !password) {
+    showMsg('Fill in your name, email, and password.', 'err');
+    return;
+  }
+  if (password.length < 6) {
+    showMsg('Password should be at least 6 characters.', 'err');
+    return;
+  }
+
+  registerBtn.disabled = true;
+  registerBtn.textContent = 'Creating...';
+
+  try {
+    const result = await callApi({ action: 'register', name, email, password });
+    if (result.success) {
+      setSession(result.userId, result.name);
+      const personalLink = window.location.origin + window.location.pathname.replace('register.html', '') + 'send.html?to=' + result.userId;
+      document.getElementById('linkOutput').value = personalLink;
+      document.getElementById('formCard').style.display = 'none';
+      document.getElementById('resultCard').style.display = 'block';
+    } else {
+      showMsg(result.message || 'Something went wrong.', 'err');
+      registerBtn.disabled = false;
+      registerBtn.textContent = 'Create my link';
+    }
+  } catch (err) {
+    showMsg('Could not reach the server. Check your connection.', 'err');
+    registerBtn.disabled = false;
+    registerBtn.textContent = 'Create my link';
+  }
+});
+
+document.getElementById('copyBtn').addEventListener('click', () => {
+  const input = document.getElementById('linkOutput');
+  input.select();
+  navigator.clipboard.writeText(input.value);
+  const btn = document.getElementById('copyBtn');
+  const original = btn.textContent;
+  btn.textContent = 'Copied';
+  setTimeout(() => btn.textContent = original, 1500);
+});
+
+document.getElementById('goInboxBtn').addEventListener('click', () => {
+  window.location.href = 'inbox.html';
+});
+</script>
+</body>
+</html>
