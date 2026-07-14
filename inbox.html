@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Your inbox — TechTmn Anon</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="wrap">
+  <div class="brand">
+    <div class="mark">TechTmn</div>
+    <h1>Your inbox</h1>
+  </div>
+
+  <div class="card" id="loggedOutCard" style="display:none;">
+    <p class="subtitle">Log in to see your messages.</p>
+    <button onclick="window.location.href='login.html?redirect=inbox.html'">Log in</button>
+  </div>
+
+  <div id="loggedInView" style="display:none;">
+    <div class="card">
+      <div class="link-row">
+        <input id="linkOutput" type="text" readonly>
+        <button id="copyBtn" class="secondary">Copy link</button>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:16px;">
+      <div id="inboxList" class="inbox-list">
+        <div class="empty-state">Loading your messages...</div>
+      </div>
+    </div>
+
+    <div class="footer-links">
+      <a href="#" id="logoutLink">Log out</a>
+    </div>
+  </div>
+</div>
+
+<script src="config.js"></script>
+<script>
+const session = getSession();
+
+if (!session) {
+  document.getElementById('loggedOutCard').style.display = 'block';
+} else {
+  document.getElementById('loggedInView').style.display = 'block';
+
+  const personalLink = window.location.origin + window.location.pathname.replace('inbox.html', '') + 'send.html?to=' + session.userId;
+  document.getElementById('linkOutput').value = personalLink;
+
+  document.getElementById('copyBtn').addEventListener('click', () => {
+    const input = document.getElementById('linkOutput');
+    input.select();
+    navigator.clipboard.writeText(input.value);
+    const btn = document.getElementById('copyBtn');
+    const original = btn.textContent;
+    btn.textContent = 'Copied';
+    setTimeout(() => btn.textContent = original, 1500);
+  });
+
+  document.getElementById('logoutLink').addEventListener('click', (e) => {
+    e.preventDefault();
+    clearSession();
+    window.location.href = 'login.html';
+  });
+
+  async function loadInbox() {
+    const listEl = document.getElementById('inboxList');
+    try {
+      const result = await callApi({ action: 'inbox', userId: session.userId });
+      if (result.success && result.messages.length > 0) {
+        listEl.innerHTML = result.messages.map(m => `
+          <div class="bubble">
+            ${escapeHtml(m.content)}
+            <span class="time">${formatDate(m.createdAt)}</span>
+          </div>
+        `).join('');
+      } else if (result.success) {
+        listEl.innerHTML = '<div class="empty-state">No messages yet. Share your link to start receiving anonymous messages.</div>';
+      } else {
+        listEl.innerHTML = '<div class="empty-state">Could not load your inbox.</div>';
+      }
+    } catch (err) {
+      listEl.innerHTML = '<div class="empty-state">Could not reach the server.</div>';
+    }
+  }
+
+  function escapeHtml(str) {
+    const div = document.createElement('div');
+    div.textContent = str;
+    return div.innerHTML;
+  }
+
+  function formatDate(raw) {
+    try {
+      const d = new Date(raw);
+      return d.toLocaleString();
+    } catch (e) {
+      return '';
+    }
+  }
+
+  loadInbox();
+}
+</script>
+</body>
+</html>

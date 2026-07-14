@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Log in — TechTmn Anon</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="wrap">
+  <div class="brand">
+    <div class="mark">TechTmn</div>
+    <h1>Log in</h1>
+  </div>
+
+  <div class="card">
+    <p class="subtitle">Log in to send a message or check your own inbox.</p>
+
+    <label for="email">Email</label>
+    <input id="email" type="email" placeholder="you@email.com" autocomplete="email">
+
+    <label for="password">Password</label>
+    <input id="password" type="password" placeholder="Your password" autocomplete="current-password">
+
+    <button id="loginBtn">Log in</button>
+    <div class="msg" id="statusMsg"></div>
+  </div>
+
+  <div class="footer-links">
+    No account yet? <a href="register.html">Create your link</a>
+  </div>
+</div>
+
+<script src="config.js"></script>
+<script>
+const statusMsg = document.getElementById('statusMsg');
+const loginBtn = document.getElementById('loginBtn');
+const params = new URLSearchParams(window.location.search);
+const redirectTo = params.get('redirect'); // e.g. "send.html?to=U123"
+
+function showMsg(text, type) {
+  statusMsg.textContent = text;
+  statusMsg.className = 'msg show ' + type;
+}
+
+loginBtn.addEventListener('click', async () => {
+  const email = document.getElementById('email').value.trim();
+  const password = document.getElementById('password').value;
+
+  if (!email || !password) {
+    showMsg('Enter your email and password.', 'err');
+    return;
+  }
+
+  loginBtn.disabled = true;
+  loginBtn.textContent = 'Logging in...';
+
+  try {
+    const result = await callApi({ action: 'login', email, password });
+    if (result.success) {
+      setSession(result.userId, result.name);
+      window.location.href = redirectTo || 'inbox.html';
+    } else {
+      showMsg(result.message || 'Invalid email or password.', 'err');
+      loginBtn.disabled = false;
+      loginBtn.textContent = 'Log in';
+    }
+  } catch (err) {
+    showMsg('Could not reach the server. Check your connection.', 'err');
+    loginBtn.disabled = false;
+    loginBtn.textContent = 'Log in';
+  }
+});
+</script>
+</body>
+</html>

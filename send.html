@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Send an anonymous message</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="wrap">
+  <div class="brand">
+    <div class="mark">TechTmn</div>
+    <h1 id="pageTitle">Send an anonymous message</h1>
+  </div>
+
+  <div class="card">
+    <div class="anon-badge"><span class="dot"></span> your name is never shown to them</div>
+    <p class="subtitle" id="subtitle">Loading...</p>
+
+    <textarea id="content" placeholder="Say what's on your mind..." maxlength="500"></textarea>
+    <button id="sendBtn">Send anonymously</button>
+    <div class="msg" id="statusMsg"></div>
+  </div>
+
+  <div class="footer-links">
+    Want your own link? <a href="register.html">Create one</a>
+  </div>
+</div>
+
+<script src="config.js"></script>
+<script>
+const params = new URLSearchParams(window.location.search);
+const recipientId = params.get('to');
+const subtitle = document.getElementById('subtitle');
+const statusMsg = document.getElementById('statusMsg');
+const sendBtn = document.getElementById('sendBtn');
+
+function showMsg(text, type) {
+  statusMsg.textContent = text;
+  statusMsg.className = 'msg show ' + type;
+}
+
+if (!recipientId) {
+  subtitle.textContent = 'This link is missing a recipient. Ask for a valid link.';
+  sendBtn.disabled = true;
+} else {
+  const session = getSession();
+  if (!session) {
+    subtitle.textContent = 'Log in to send this message (so we know who sent it — they still won\'t see your name).';
+    sendBtn.textContent = 'Log in to send';
+    sendBtn.addEventListener('click', () => {
+      window.location.href = 'login.html?redirect=' + encodeURIComponent(window.location.pathname.split('/').pop() + window.location.search);
+    });
+  } else {
+    subtitle.textContent = 'Sending as: logged in (your name stays hidden from the recipient).';
+    sendBtn.addEventListener('click', async () => {
+      const content = document.getElementById('content').value.trim();
+      if (!content) {
+        showMsg('Write something before sending.', 'err');
+        return;
+      }
+      sendBtn.disabled = true;
+      sendBtn.textContent = 'Sending...';
+      try {
+        const result = await callApi({
+          action: 'send',
+          senderId: session.userId,
+          recipientId: recipientId,
+          content: content
+        });
+        if (result.success) {
+          showMsg('Message sent — anonymously delivered.', 'ok');
+          document.getElementById('content').value = '';
+        } else {
+          showMsg(result.message || 'Could not send message.', 'err');
+        }
+      } catch (err) {
+        showMsg('Could not reach the server. Check your connection.', 'err');
+      }
+      sendBtn.disabled = false;
+      sendBtn.textContent = 'Send anonymously';
+    });
+  }
+}
+</script>
+</body>
+</html>
