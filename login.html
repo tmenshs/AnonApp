@@ -12,54 +12,69 @@
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
+<header class="site-header" id="siteHeader">
+  <div class="header-inner">
+    <a href="index.html" class="header-logo">NGL's</a>
+    <button class="menu-toggle" id="menuToggle" aria-label="Open menu">
+      <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="7" x2="20" y2="7"></line><line x1="4" y1="12" x2="20" y2="12"></line><line x1="4" y1="17" x2="20" y2="17"></line></svg>
+    </button>
+  </div>
+  <nav class="header-menu" id="headerMenu">
+    <a href="https://tmenshs.github.io/AnonApp/inbox.html">
+      <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12l9-9 9 9"></path><path d="M5 10v10h14V10"></path></svg>
+      Inbox
+    </a>
+    <a href="index.html">
+      <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+      Create your link
+    </a>
+  </nav>
+</header>
+
 <div class="wrap">
   <div class="brand">
     <div class="mark">NGL's</div>
     <h1>Log in</h1>
   </div>
-
   <div class="card">
     <p class="subtitle">Log in to send a message or check your own inbox.</p>
-
     <label for="email">Email</label>
     <input id="email" type="email" placeholder="you@email.com" autocomplete="email" autocapitalize="off" autocorrect="off" spellcheck="false">
-
     <label for="password">Password</label>
     <input id="password" type="password" placeholder="Your password" autocomplete="current-password">
-
     <button id="loginBtn">Log in</button>
     <div class="msg" id="statusMsg"></div>
   </div>
-
   <div class="footer-links">
     No account yet? <a href="index.html">Create your link</a>
   </div>
 </div>
-
 <script src="config.js"></script>
 <script>
+const menuToggle = document.getElementById('menuToggle');
+const headerMenu = document.getElementById('headerMenu');
+menuToggle.addEventListener('click', () => {
+  menuToggle.classList.toggle('open');
+  headerMenu.classList.toggle('open');
+});
+
 const statusMsg = document.getElementById('statusMsg');
 const loginBtn = document.getElementById('loginBtn');
 const params = new URLSearchParams(window.location.search);
-const redirectTo = params.get('redirect'); // e.g. "send.html?to=U123"
-
+const redirectTo = params.get('redirect');
 function showMsg(text, type) {
   statusMsg.textContent = text;
   statusMsg.className = 'msg show ' + type;
 }
-
 loginBtn.addEventListener('click', async () => {
   const email = document.getElementById('email').value.trim();
   const password = document.getElementById('password').value;
-
   if (!email || !password) {
     showMsg('Enter your email and password.', 'err');
     return;
   }
-
   loginBtn.disabled = true;
   loginBtn.textContent = 'Logging in...';
-
   try {
     const result = await callApi({ action: 'login', email, password });
     if (result.success) {
