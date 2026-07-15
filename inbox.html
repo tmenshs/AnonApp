@@ -12,17 +12,28 @@
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
+<header class="site-header" id="siteHeader">
+  <div class="header-inner">
+    <a href="index.html" class="header-logo">NGL's</a>
+    <button class="menu-toggle" id="menuToggle" aria-label="Open menu">
+      <span></span><span></span><span></span>
+    </button>
+  </div>
+  <nav class="header-menu" id="headerMenu">
+    <a href="https://tmenshs.github.io/AnonApp/send.html">Send a message</a>
+    <a href="index.html">Create your link</a>
+  </nav>
+</header>
+
 <div class="wrap">
   <div class="brand">
     <div class="mark">NGL's</div>
     <h1>Your inbox</h1>
   </div>
-
   <div class="card" id="loggedOutCard" style="display:none;">
     <p class="subtitle">Log in to see your messages.</p>
     <button onclick="window.location.href='login.html?redirect=inbox.html'">Log in</button>
   </div>
-
   <div id="loggedInView" style="display:none;">
     <div class="card">
       <div class="link-row">
@@ -30,31 +41,32 @@
         <button id="copyBtn" class="secondary">Copy link</button>
       </div>
     </div>
-
     <div class="card" style="margin-top:16px;">
       <div id="inboxList" class="inbox-list">
         <div class="empty-state">Loading your messages...</div>
       </div>
     </div>
-
     <div class="footer-links">
       <a href="#" id="logoutLink">Log out</a>
     </div>
   </div>
 </div>
-
 <script src="config.js"></script>
 <script>
-const session = getSession();
+const menuToggle = document.getElementById('menuToggle');
+const headerMenu = document.getElementById('headerMenu');
+menuToggle.addEventListener('click', () => {
+  menuToggle.classList.toggle('open');
+  headerMenu.classList.toggle('open');
+});
 
+const session = getSession();
 if (!session) {
   document.getElementById('loggedOutCard').style.display = 'block';
 } else {
   document.getElementById('loggedInView').style.display = 'block';
-
   const personalLink = window.location.origin + window.location.pathname.replace('inbox.html', '') + 'send.html?to=' + session.userId;
   document.getElementById('linkOutput').value = personalLink;
-
   document.getElementById('copyBtn').addEventListener('click', () => {
     const input = document.getElementById('linkOutput');
     input.select();
@@ -64,13 +76,11 @@ if (!session) {
     btn.textContent = 'Copied';
     setTimeout(() => btn.textContent = original, 1500);
   });
-
   document.getElementById('logoutLink').addEventListener('click', (e) => {
     e.preventDefault();
     clearSession();
     window.location.href = 'login.html';
   });
-
   async function loadInbox() {
     const listEl = document.getElementById('inboxList');
     try {
@@ -91,13 +101,11 @@ if (!session) {
       listEl.innerHTML = '<div class="empty-state">Could not reach the server.</div>';
     }
   }
-
   function escapeHtml(str) {
     const div = document.createElement('div');
     div.textContent = str;
     return div.innerHTML;
   }
-
   function formatDate(raw) {
     try {
       const d = new Date(raw);
@@ -106,7 +114,6 @@ if (!session) {
       return '';
     }
   }
-
   loadInbox();
 }
 </script>
