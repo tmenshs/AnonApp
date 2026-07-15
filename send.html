@@ -91,7 +91,7 @@ if (!recipientId) {
       window.location.href = 'login.html?redirect=' + encodeURIComponent(window.location.pathname.split('/').pop() + window.location.search);
     });
   } else {
-    subtitle.textContent = 'Sending as: logged in (your name stays hidden from the recipient).';
+    subtitle.textContent = 'Whatever's on your mind, it stays anonymous.';
     sendBtn.addEventListener('click', async () => {
       const content = document.getElementById('content').value.trim();
       if (!content) {
