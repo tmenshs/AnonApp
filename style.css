@@ -57,7 +57,7 @@ body::before {
   font-size: 13px;
   letter-spacing: 0.12em;
   text-transform: uppercase;
-  color: var(--danger);
+  color: var(--accent);
 }
 
 .brand h1 {
