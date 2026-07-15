@@ -309,3 +309,39 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 .header-menu a:hover svg {
   stroke: var(--danger);
 }
+
+/* ===== FLOATING EMOJI BACKGROUND ===== */
+.emoji-bg {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 0;
+}
+.emoji-bg span {
+  position: absolute;
+  bottom: -60px;
+  font-size: 24px;
+  opacity: 0.35;
+  animation: floatUp linear infinite;
+}
+@keyframes floatUp {
+  0% {
+    transform: translateY(0) rotate(0deg);
+    opacity: 0;
+  }
+  10% {
+    opacity: 0.35;
+  }
+  90% {
+    opacity: 0.35;
+  }
+  100% {
+    transform: translateY(-110vh) rotate(20deg);
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .emoji-bg span { animation: none; display: none; }
+}
