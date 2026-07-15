@@ -12,6 +12,25 @@
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
+<header class="site-header" id="siteHeader">
+  <div class="header-inner">
+    <a href="index.html" class="header-logo">NGL's</a>
+    <button class="menu-toggle" id="menuToggle" aria-label="Open menu">
+      <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="7" x2="20" y2="7"></line><line x1="4" y1="12" x2="20" y2="12"></line><line x1="4" y1="17" x2="20" y2="17"></line></svg>
+    </button>
+  </div>
+  <nav class="header-menu" id="headerMenu">
+    <a href="https://tmenshs.github.io/AnonApp/inbox.html">
+      <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12l9-9 9 9"></path><path d="M5 10v10h14V10"></path></svg>
+      Inbox
+    </a>
+    <a href="login.html">
+      <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"></path><polyline points="10 17 15 12 10 7"></polyline><line x1="15" y1="12" x2="3" y2="12"></line></svg>
+      Log in
+    </a>
+  </nav>
+</header>
+
 <div class="wrap">
   <div class="brand">
     <div class="mark">NGL's</div>
@@ -51,6 +70,13 @@
 
 <script src="config.js"></script>
 <script>
+const menuToggle = document.getElementById('menuToggle');
+const headerMenu = document.getElementById('headerMenu');
+menuToggle.addEventListener('click', () => {
+  menuToggle.classList.toggle('open');
+  headerMenu.classList.toggle('open');
+});
+
 const statusMsg = document.getElementById('statusMsg');
 const registerBtn = document.getElementById('registerBtn');
 
