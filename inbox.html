@@ -87,17 +87,14 @@ if (!session) {
     clearSession();
     window.location.href = 'login.html';
   });
+
   async function loadInbox() {
     const listEl = document.getElementById('inboxList');
     try {
       const result = await callApi({ action: 'inbox', userId: session.userId });
       if (result.success && result.messages.length > 0) {
-        listEl.innerHTML = result.messages.map(m => `
-          <div class="bubble">
-            ${escapeHtml(m.content)}
-            <span class="time">${formatDate(m.createdAt)}</span>
-          </div>
-        `).join('');
+        listEl.innerHTML = result.messages.map(m => renderBubble(m)).join('');
+        attachReplyHandlers();
       } else if (result.success) {
         listEl.innerHTML = '<div class="empty-state">No messages yet. Share your link to start receiving anonymous messages.</div>';
       } else {
@@ -107,6 +104,77 @@ if (!session) {
       listEl.innerHTML = '<div class="empty-state">Could not reach the server.</div>';
     }
   }
+
+  function renderBubble(m) {
+    const hasReply = m.reply && m.reply.trim().length > 0;
+    return `
+      <div class="bubble" data-message-id="${m.id}">
+        ${escapeHtml(m.content)}
+        <span class="time">${formatDate(m.createdAt)}</span>
+
+        ${hasReply ? `
+          <div class="reply-block">
+            <span class="reply-label">Your reply</span>
+            <div class="reply-text">${escapeHtml(m.reply)}</div>
+          </div>
+        ` : `
+          <div class="reply-form" data-message-id="${m.id}">
+            <textarea class="reply-input" placeholder="Write a reply..." maxlength="500"></textarea>
+            <button class="reply-btn secondary">Reply</button>
+            <div class="reply-status"></div>
+          </div>
+        `}
+      </div>
+    `;
+  }
+
+  function attachReplyHandlers() {
+    document.querySelectorAll('.reply-form').forEach(form => {
+      const messageId = form.getAttribute('data-message-id');
+      const btn = form.querySelector('.reply-btn');
+      const input = form.querySelector('.reply-input');
+      const status = form.querySelector('.reply-status');
+
+      btn.addEventListener('click', async () => {
+        const content = input.value.trim();
+        if (!content) {
+          status.textContent = 'Write something before sending.';
+          status.className = 'reply-status show err';
+          return;
+        }
+        btn.disabled = true;
+        btn.textContent = 'Sending...';
+        try {
+          const result = await callApi({
+            action: 'reply',
+            userId: session.userId,
+            messageId: messageId,
+            content: content
+          });
+          if (result.success) {
+            const bubble = form.closest('.bubble');
+            form.outerHTML = `
+              <div class="reply-block">
+                <span class="reply-label">Your reply</span>
+                <div class="reply-text">${escapeHtml(content)}</div>
+              </div>
+            `;
+          } else {
+            status.textContent = result.message || 'Could not send reply.';
+            status.className = 'reply-status show err';
+            btn.disabled = false;
+            btn.textContent = 'Reply';
+          }
+        } catch (err) {
+          status.textContent = 'Could not reach the server.';
+          status.className = 'reply-status show err';
+          btn.disabled = false;
+          btn.textContent = 'Reply';
+        }
+      });
+    });
+  }
+
   function escapeHtml(str) {
     const div = document.createElement('div');
     div.textContent = str;
