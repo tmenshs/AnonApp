@@ -48,13 +48,13 @@
 </header>
 <div class="wrap">
   <div class="brand">
-    <div class="mark">NGL's</div>
+    <div class="mark">Xyle.co😍</div>
     <h1 id="pageTitle">Send an anonymous message</h1>
   </div>
   <div class="card">
     <div class="anon-badge"><span class="dot"></span> Stay unseen, stay authentic.</div>
     <p class="subtitle" id="subtitle">Loading...</p>
-    <textarea id="content" placeholder="Say what's on your mind..." maxlength="500"></textarea>
+    <textarea id="content" placeholder="Say what's on your mind........😜" maxlength="500"></textarea>
     <button id="sendBtn">Send anonymously</button>
     <div class="msg" id="statusMsg"></div>
   </div>
@@ -85,7 +85,7 @@ if (!recipientId) {
 } else {
   const session = getSession();
   if (!session) {
-    subtitle.textContent = 'Log in to send this message (so we know who sent it — they still won\'t see your name).';
+    subtitle.textContent = 'Log in to send this message (No names, no judgment — they still won\'t see your name).';
     sendBtn.textContent = 'Log in to send';
     sendBtn.addEventListener('click', () => {
       window.location.href = 'login.html?redirect=' + encodeURIComponent(window.location.pathname.split('/').pop() + window.location.search);
