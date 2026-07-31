@@ -104,12 +104,15 @@ if (!session) {
     window.location.href = 'login.html';
   });
 
+  const seenMessageIds = new Set();
+
   async function loadInbox() {
     const listEl = document.getElementById('inboxList');
     try {
       const result = await callApi({ action: 'inbox', userId: session.userId });
       if (result.success && result.messages.length > 0) {
         listEl.innerHTML = result.messages.map(m => renderBubble(m)).join('');
+        result.messages.forEach(m => seenMessageIds.add(m.id));
         attachReplyHandlers();
       } else if (result.success) {
         listEl.innerHTML = '<div class="empty-state">No messages yet. Share your link to start receiving anonymous messages.</div>';
@@ -118,6 +121,28 @@ if (!session) {
       }
     } catch (err) {
       listEl.innerHTML = '<div class="empty-state">Could not reach the server.</div>';
+    }
+  }
+
+  async function pollInbox() {
+    try {
+      const result = await callApi({ action: 'inbox', userId: session.userId });
+      if (!result.success) return;
+
+      const newMessages = result.messages.filter(m => !seenMessageIds.has(m.id));
+      if (newMessages.length === 0) return;
+
+      const listEl = document.getElementById('inboxList');
+      const emptyState = listEl.querySelector('.empty-state');
+      if (emptyState) emptyState.remove();
+
+      newMessages.forEach(m => {
+        listEl.insertAdjacentHTML('afterbegin', renderBubble(m));
+        seenMessageIds.add(m.id);
+      });
+      attachReplyHandlers();
+    } catch (err) {
+      // silent fail — just try again next tick
     }
   }
 
@@ -141,7 +166,8 @@ if (!session) {
   }
 
   function attachReplyHandlers() {
-    document.querySelectorAll('.reply-form').forEach(form => {
+    document.querySelectorAll('.reply-form:not([data-bound])').forEach(form => {
+      form.setAttribute('data-bound', 'true');
       const messageId = form.getAttribute('data-message-id');
       const btn = form.querySelector('.reply-btn');
       const input = form.querySelector('.reply-input');
@@ -207,6 +233,7 @@ if (!session) {
     }
   }
   loadInbox();
+  setInterval(pollInbox, 10000);
 }
 </script>
 </body>
