@@ -64,14 +64,9 @@
       </div>
     </div>
     <div class="card" style="margin-top:16px;">
-      <div class="tab-row">
-        <button class="tab-btn active" id="tabInboxBtn">Inbox</button>
-        <button class="tab-btn" id="tabSentBtn">Sent</button>
-      </div>
       <div id="inboxList" class="inbox-list">
         <div class="empty-state">Loading your messages...</div>
       </div>
-      <div class="sync-note" id="syncNote"></div>
     </div>
     <div class="footer-links">
       <a href="#" id="logoutLink">Log out</a>
@@ -109,107 +104,36 @@ if (!session) {
     window.location.href = 'login.html';
   });
 
-  // ---- Tab state ----
-  let currentTab = 'inbox'; // 'inbox' | 'sent'
-  const tabInboxBtn = document.getElementById('tabInboxBtn');
-  const tabSentBtn = document.getElementById('tabSentBtn');
-  const listEl = document.getElementById('inboxList');
-  const syncNote = document.getElementById('syncNote');
-
-  tabInboxBtn.addEventListener('click', () => switchTab('inbox'));
-  tabSentBtn.addEventListener('click', () => switchTab('sent'));
-
-  function switchTab(tab) {
-    if (tab === currentTab) return;
-    currentTab = tab;
-    tabInboxBtn.classList.toggle('active', tab === 'inbox');
-    tabSentBtn.classList.toggle('active', tab === 'sent');
-    listEl.innerHTML = '<div class="empty-state">Loading...</div>';
-    loadCurrentTab();
-  }
-
-  // Track whether the user is actively typing a reply so auto-refresh
-  // doesn't wipe out an in-progress draft or a just-sent optimistic bubble.
-  let userIsTyping = false;
-  document.addEventListener('focusin', (e) => {
-    if (e.target && e.target.classList && e.target.classList.contains('reply-input')) {
-      userIsTyping = true;
-    }
-  });
-  document.addEventListener('focusout', (e) => {
-    if (e.target && e.target.classList && e.target.classList.contains('reply-input')) {
-      userIsTyping = false;
-    }
-  });
-
-  function loadCurrentTab() {
-    if (currentTab === 'inbox') loadInbox(); else loadSent();
-  }
-
   async function loadInbox() {
+    const listEl = document.getElementById('inboxList');
     try {
       const result = await callApi({ action: 'inbox', userId: session.userId });
-      if (currentTab !== 'inbox' || userIsTyping) return; // tab changed or user mid-reply, skip render
-      renderList(result, true);
-    } catch (err) {
-      if (currentTab === 'inbox' && listEl.innerHTML.includes('Loading')) {
-        listEl.innerHTML = '<div class="empty-state">Could not reach the server.</div>';
+      if (result.success && result.messages.length > 0) {
+        listEl.innerHTML = result.messages.map(m => renderBubble(m)).join('');
+        attachReplyHandlers();
+      } else if (result.success) {
+        listEl.innerHTML = '<div class="empty-state">No messages yet. Share your link to start receiving anonymous messages.</div>';
+      } else {
+        listEl.innerHTML = '<div class="empty-state">Could not load your inbox.</div>';
       }
-      setSyncNote('Could not sync — retrying...');
-    }
-  }
-
-  async function loadSent() {
-    try {
-      const result = await callApi({ action: 'sent', userId: session.userId });
-      if (currentTab !== 'sent') return; // tab changed while request was in flight
-      renderList(result, false);
     } catch (err) {
-      if (currentTab === 'sent' && listEl.innerHTML.includes('Loading')) {
-        listEl.innerHTML = '<div class="empty-state">Could not reach the server.</div>';
-      }
-      setSyncNote('Could not sync — retrying...');
+      listEl.innerHTML = '<div class="empty-state">Could not reach the server.</div>';
     }
   }
 
-  function renderList(result, canReply) {
-    if (result.success && result.messages.length > 0) {
-      listEl.innerHTML = result.messages.map(m => renderBubble(m, canReply)).join('');
-      if (canReply) attachReplyHandlers();
-      setSyncNote('Synced ' + new Date().toLocaleTimeString());
-    } else if (result.success) {
-      listEl.innerHTML = canReply
-        ? '<div class="empty-state">No messages yet. Share your link to start receiving anonymous messages.</div>'
-        : '<div class="empty-state">You haven\'t sent any messages yet.</div>';
-      setSyncNote('Synced ' + new Date().toLocaleTimeString());
-    } else {
-      listEl.innerHTML = '<div class="empty-state">Could not load messages.</div>';
-    }
-  }
-
-  function setSyncNote(text) {
-    syncNote.textContent = text;
-  }
-
-  function renderBubble(m, canReply) {
-    const hasReply = m.reply && m.reply.trim().length > 0;
+  // Every inbox item can always be replied to — replies are just new messages
+  // sent back to whoever sent this one, so the conversation can go back and forth.
+  function renderBubble(m) {
     return `
       <div class="bubble" data-message-id="${m.id}">
         ${escapeHtml(m.content)}
         <span class="time">${formatDate(m.createdAt)}</span>
 
-        ${hasReply ? `
-          <div class="reply-block">
-            <span class="reply-label">${canReply ? 'Your reply' : 'Their reply'}</span>
-            <div class="reply-text">${escapeHtml(m.reply)}</div>
-          </div>
-        ` : (canReply ? `
-          <div class="reply-form" data-message-id="${m.id}">
-            <textarea class="reply-input" placeholder="Write a reply..." maxlength="500"></textarea>
-            <button class="reply-btn secondary">Reply</button>
-            <div class="reply-status"></div>
-          </div>
-        ` : '')}
+        <div class="reply-form" data-message-id="${m.id}">
+          <textarea class="reply-input" placeholder="Write a reply..." maxlength="500"></textarea>
+          <button class="reply-btn secondary">Reply</button>
+          <div class="reply-status"></div>
+        </div>
       </div>
     `;
   }
@@ -230,17 +154,6 @@ if (!session) {
         }
         btn.disabled = true;
         btn.textContent = 'Sending...';
-
-        // Optimistic UI: show the reply immediately.
-        const bubble = form.closest('.bubble');
-        bubble.classList.add('optimistic');
-        form.outerHTML = `
-          <div class="reply-block">
-            <span class="reply-label">Your reply</span>
-            <div class="reply-text">${escapeHtml(content)}</div>
-          </div>
-        `;
-
         try {
           const result = await callApi({
             action: 'reply',
@@ -249,28 +162,25 @@ if (!session) {
             content: content
           });
           if (result.success) {
-            bubble.classList.remove('optimistic');
+            status.textContent = 'Reply sent.';
+            status.className = 'reply-status show ok';
+            input.value = '';
+            btn.disabled = false;
+            btn.textContent = 'Reply';
           } else {
-            // Roll back: restore the reply form and show the error.
-            rollbackReply(bubble, messageId, content, result.message || 'Could not send reply.');
+            status.textContent = result.message || 'Could not send reply.';
+            status.className = 'reply-status show err';
+            btn.disabled = false;
+            btn.textContent = 'Reply';
           }
         } catch (err) {
-          rollbackReply(bubble, messageId, content, 'Could not reach the server.');
+          status.textContent = 'Could not reach the server.';
+          status.className = 'reply-status show err';
+          btn.disabled = false;
+          btn.textContent = 'Reply';
         }
       });
     });
-  }
-
-  function rollbackReply(bubble, messageId, previousContent, errorText) {
-    bubble.classList.remove('optimistic');
-    bubble.querySelector('.reply-block').outerHTML = `
-      <div class="reply-form" data-message-id="${messageId}">
-        <textarea class="reply-input" placeholder="Write a reply...">${escapeHtml(previousContent)}</textarea>
-        <button class="reply-btn secondary">Reply</button>
-        <div class="reply-status show err">${escapeHtml(errorText)}</div>
-      </div>
-    `;
-    attachReplyHandlers();
   }
 
   function escapeHtml(str) {
@@ -286,13 +196,7 @@ if (!session) {
       return '';
     }
   }
-
-  loadCurrentTab();
-  // Auto-refresh the active tab every 10s. Skipped while a reply draft
-  // is focused so it never overwrites what you're typing.
-  setInterval(() => {
-    if (!userIsTyping) loadCurrentTab();
-  }, 10000);
+  loadInbox();
 }
 </script>
 </body>
