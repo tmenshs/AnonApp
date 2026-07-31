@@ -162,9 +162,15 @@ if (!session) {
 
   async function refreshThread(threadId) {
     try {
-      const result = await callApi({ action: 'getThread', userId: session.userId, threadId });
+      const result = await callApi({ action: 'thread', userId: session.userId, threadId });
       if (result.success) {
-        conversations.set(threadId, { threadId, messages: result.messages });
+        // Normalize the backend's isMine flag into a direction so the
+        // rest of the rendering code doesn't need to know about it.
+        const messages = result.messages.map(m => ({
+          ...m,
+          direction: m.isMine ? 'out' : 'in'
+        }));
+        conversations.set(threadId, { threadId, messages });
       }
     } catch (err) {
       // keep whatever was cached for this thread, if anything
@@ -218,7 +224,7 @@ if (!session) {
     const messages = [...conv.messages].sort(
       (a, b) => new Date(a.createdAt) - new Date(b.createdAt)
     );
-    const original = messages.find(m => m.direction === 'in') || messages[0];
+    const original = messages.find(m => !m.parentId) || messages[0];
     const replies = messages.filter(m => m.id !== original.id);
     const lastMessage = messages[messages.length - 1];
 
