@@ -10,59 +10,6 @@
 <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
 <link rel="stylesheet" href="style.css">
-<style>
-  /* ===== Messenger-style additions (kept separate from style.css) ===== */
-  .msgr{ display:flex; gap:16px; align-items:flex-start; }
-  .thread-list{ width:280px; flex-shrink:0; }
-  .thread-item{
-    display:flex; flex-direction:column; gap:2px;
-    padding:12px 14px; border-radius:12px; cursor:pointer;
-    border:1px solid transparent; margin-bottom:6px;
-  }
-  .thread-item:hover{ background:rgba(255,255,255,0.04); }
-  .thread-item.active{ border-color: currentColor; background:rgba(255,255,255,0.06); }
-  .thread-item .t-top{ display:flex; justify-content:space-between; gap:8px; }
-  .thread-item .t-name{ font-weight:600; font-size:13.5px; }
-  .thread-item .t-time{ font-size:11px; opacity:0.6; white-space:nowrap; }
-  .thread-item .t-preview{
-    font-size:12.5px; opacity:0.75;
-    white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
-  }
-  .thread-panel{ flex:1; min-width:0; display:flex; flex-direction:column; }
-  .thread-scroll{
-    flex:1; min-height:300px; max-height:60vh; overflow-y:auto;
-    display:flex; flex-direction:column; gap:8px; padding:10px 4px;
-  }
-  .msg-row{ display:flex; }
-  .msg-row.mine{ justify-content:flex-end; }
-  .msg-row.theirs{ justify-content:flex-start; }
-  .msg-bubble{
-    max-width:70%; padding:9px 13px; border-radius:14px;
-    font-size:14px; line-height:1.4; white-space:pre-wrap; word-wrap:break-word;
-  }
-  .msg-row.theirs .msg-bubble{ background:rgba(255,255,255,0.06); border-bottom-left-radius:4px; }
-  .msg-row.mine .msg-bubble{ background:#e8a020; color:#0d1b3e; font-weight:500; border-bottom-right-radius:4px; }
-  .msg-time{ font-size:10px; opacity:0.55; margin-top:3px; display:block; }
-  .thread-composer{ display:flex; gap:8px; margin-top:10px; }
-  .thread-composer textarea{
-    flex:1; resize:none; min-height:42px; max-height:110px;
-    border-radius:10px; padding:10px 12px; font-family:inherit; font-size:14px;
-  }
-  .no-thread-selected{ opacity:0.6; font-size:13.5px; padding:30px 10px; text-align:center; }
-  @media (max-width: 720px){
-    .msgr{ flex-direction:column; }
-    .thread-list{ width:100%; }
-    .thread-panel{ display:none; }
-    .thread-panel.open{ display:flex; }
-    .thread-list.hidden-mobile{ display:none; }
-    .back-to-list{ display:inline-block; margin-bottom:8px; cursor:pointer; font-size:13px; }
-  }
-  .back-to-list{ display:none; }
-  .thread-item .t-unread-dot{
-    display:inline-block; width:7px; height:7px; border-radius:50%;
-    background: var(--accent, #00D9B5); margin-left:6px; flex-shrink:0;
-  }
-</style>
 </head>
 <body>
 <div class="emoji-bg" aria-hidden="true">
@@ -117,13 +64,8 @@
       </div>
     </div>
     <div class="card" style="margin-top:16px;">
-      <div class="msgr">
-        <div class="thread-list" id="threadList">
-          <div class="empty-state">Loading your conversations...</div>
-        </div>
-        <div class="thread-panel" id="threadPanel">
-          <div class="no-thread-selected">Select a conversation to view it.</div>
-        </div>
+      <div id="inboxList" class="inbox-list">
+        <div class="empty-state">Loading your messages...</div>
       </div>
     </div>
     <div class="footer-links">
@@ -162,220 +104,199 @@ if (!session) {
     window.location.href = 'login.html';
   });
 
-  let openThreadId = null;
-  let threadsByLatest = []; // [{threadId, preview, createdAt}], newest first
-  let currentMessages = [];  // messages currently rendered for the open thread
-  let isReplySending = false; // guards against polling clobbering the UI mid-send
+  // ---- Conversation-grouped data layer -------------------------------
+  // conversations: threadId -> { threadId, messages: [...] }
+  // messages: everything in the thread, incoming + your own replies,
+  // each with { id, direction: 'in'|'out', content, createdAt }
+  let conversations = new Map();
+  let draftText = new Map();      // threadId -> whatever the user is mid-typing
+  let renderedIds = new Map();    // threadId -> Set of message ids currently in the DOM
+  let activeRequest = 0;          // guards against overlapping loadInbox/poll races
 
-  // ===== Conversation list (grouped by threadId) =====
-  async function loadThreadList() {
-    const listEl = document.getElementById('threadList');
-    const isFirstLoad = threadsByLatest.length === 0;
-    if (isFirstLoad) {
-      listEl.innerHTML = '<div class="empty-state">Loading your conversations...</div>';
-    }
+  // A conversation's "last activity" is the newest timestamp among ALL its
+  // messages (incoming AND your own replies) — not just the newest incoming
+  // one. Otherwise a thread you just replied to (and are waiting on) would
+  // look stale and sink below threads that haven't been touched.
+  function lastActivityOf(conv) {
+    return conv.messages.reduce((max, m) => {
+      const t = new Date(m.createdAt).getTime();
+      return t > max ? t : max;
+    }, 0);
+  }
+
+  function sortedThreadIds() {
+    return [...conversations.values()]
+      .sort((a, b) => lastActivityOf(b) - lastActivityOf(a))
+      .map(c => c.threadId);
+  }
+
+  async function loadInbox() {
+    const listEl = document.getElementById('inboxList');
+    const requestId = ++activeRequest;
     try {
-      const result = await callApi({ action: 'inbox', userId: session.userId });
-      if (!result.success) {
-        if (isFirstLoad) listEl.innerHTML = '<div class="empty-state">Could not load your inbox.</div>';
+      const summary = await callApi({ action: 'inbox', userId: session.userId });
+      if (requestId !== activeRequest) return; // a newer load superseded this one
+
+      if (!summary.success) {
+        listEl.innerHTML = '<div class="empty-state">Could not load your inbox.</div>';
         return;
       }
-      if (result.messages.length === 0) {
+      if (summary.messages.length === 0) {
         listEl.innerHTML = '<div class="empty-state">No messages yet. Share your link to start receiving anonymous messages.</div>';
-        threadsByLatest = [];
         return;
       }
 
-      // Inbox is already newest-first, so the first message we see per
-      // threadId is that thread's latest preview.
-      const seen = new Set();
-      threadsByLatest = [];
-      result.messages.forEach(m => {
-        if (!seen.has(m.threadId)) {
-          seen.add(m.threadId);
-          threadsByLatest.push({ threadId: m.threadId, preview: m.content, createdAt: m.createdAt });
-        }
-      });
+      const threadIds = [...new Set(summary.messages.map(m => m.threadId))];
 
-      renderThreadList();
+      // Pull each conversation's full, authoritative history (all incoming
+      // messages + all replies) fresh from the server — never rely on
+      // anything held only in memory, so a reload can never lose a reply.
+      await Promise.all(threadIds.map(id => refreshThread(id)));
+      if (requestId !== activeRequest) return;
+
+      renderAll();
     } catch (err) {
-      if (isFirstLoad) listEl.innerHTML = '<div class="empty-state">Could not reach the server.</div>';
+      listEl.innerHTML = '<div class="empty-state">Could not reach the server.</div>';
     }
   }
 
-  function renderThreadList() {
-    const listEl = document.getElementById('threadList');
-    listEl.innerHTML = threadsByLatest.map(t => `
-      <div class="thread-item ${t.threadId === openThreadId ? 'active' : ''}" data-thread-id="${t.threadId}">
-        <div class="t-top">
-          <span class="t-name">Conversation</span>
-          <span class="t-time">${formatDate(t.createdAt)}</span>
-        </div>
-        <div class="t-preview">${escapeHtml(t.preview)}</div>
-      </div>
-    `).join('');
+  async function refreshThread(threadId) {
+    try {
+      const result = await callApi({ action: 'getThread', userId: session.userId, threadId });
+      if (result.success) {
+        conversations.set(threadId, { threadId, messages: result.messages });
+      }
+    } catch (err) {
+      // keep whatever was cached for this thread, if anything
+    }
+  }
 
-    listEl.querySelectorAll('.thread-item').forEach(el => {
-      el.addEventListener('click', () => openThread(el.getAttribute('data-thread-id')));
+  // Poll: refresh every known thread's data, plus pick up any brand-new
+  // threads, then re-render — but never stomp a draft the user is typing.
+  async function pollInbox() {
+    const requestId = ++activeRequest;
+    try {
+      const summary = await callApi({ action: 'inbox', userId: session.userId });
+      if (requestId !== activeRequest || !summary.success) return;
+
+      const threadIds = [...new Set(summary.messages.map(m => m.threadId))];
+      await Promise.all(threadIds.map(id => refreshThread(id)));
+      if (requestId !== activeRequest) return;
+
+      renderAll();
+    } catch (err) {
+      // silent fail — just try again next tick
+    }
+  }
+
+  function renderAll() {
+    const listEl = document.getElementById('inboxList');
+    const ids = sortedThreadIds();
+
+    // Save whatever's currently typed in each open reply box before we
+    // blow away the DOM, so re-rendering never wipes an in-progress draft.
+    document.querySelectorAll('.reply-input').forEach(input => {
+      const tid = input.closest('.reply-form').getAttribute('data-thread-id');
+      draftText.set(tid, input.value);
+    });
+
+    listEl.innerHTML = ids.map(id => renderConversationBubble(conversations.get(id))).join('');
+    attachReplyHandlers();
+
+    // Restore drafts.
+    document.querySelectorAll('.reply-input').forEach(input => {
+      const tid = input.closest('.reply-form').getAttribute('data-thread-id');
+      if (draftText.has(tid)) input.value = draftText.get(tid);
     });
   }
 
-  // ===== Full conversation view =====
-  // backgroundRefresh = true means this call came from the polling timer, not a
-  // user click — so we must never blow away an in-progress draft or reset scroll
-  // unless the conversation actually has new content.
-  async function openThread(threadId, backgroundRefresh = false) {
-    const isSwitchingThread = openThreadId !== threadId;
-    openThreadId = threadId;
-
-    // Don't touch the DOM for a background refresh while the user is mid-send.
-    if (backgroundRefresh && isReplySending) return;
-
-    renderThreadList(); // refresh active highlight
-    document.getElementById('threadPanel').classList.add('open');
-    document.getElementById('threadList').classList.add('hidden-mobile');
-
-    const panel = document.getElementById('threadPanel');
-    if (!backgroundRefresh || isSwitchingThread) {
-      panel.innerHTML = '<div class="no-thread-selected">Loading conversation...</div>';
-    }
-
-    try {
-      const result = await callApi({ action: 'thread', userId: session.userId, threadId: threadId });
-      if (!result.success) {
-        if (!backgroundRefresh) panel.innerHTML = '<div class="no-thread-selected">Could not load this conversation.</div>';
-        return;
-      }
-
-      // Skip re-render entirely if nothing changed and this is just a background
-      // poll — this is what stops the reply textarea from being wiped while typing.
-      if (backgroundRefresh && !isSwitchingThread && sameMessages(currentMessages, result.messages)) {
-        return;
-      }
-
-      currentMessages = result.messages;
-      renderThreadPanel(currentMessages, { preserveDraft: backgroundRefresh });
-    } catch (err) {
-      if (!backgroundRefresh) panel.innerHTML = '<div class="no-thread-selected">Could not reach the server.</div>';
-    }
-  }
-
-  function sameMessages(a, b) {
-    if (a.length !== b.length) return false;
-    for (let i = 0; i < a.length; i++) {
-      if (a[i].id !== b[i].id) return false;
-    }
-    return true;
-  }
-
-  function renderThreadPanel(messages, opts = {}) {
-    const panel = document.getElementById('threadPanel');
+  // One bubble per conversation. Shows the original message, then every
+  // reply exchanged so far (fetched fresh from the server, so it survives
+  // reloads), then a single reply box that always targets this thread's
+  // latest message.
+  function renderConversationBubble(conv) {
+    const messages = [...conv.messages].sort(
+      (a, b) => new Date(a.createdAt) - new Date(b.createdAt)
+    );
+    const original = messages.find(m => m.direction === 'in') || messages[0];
+    const replies = messages.filter(m => m.id !== original.id);
     const lastMessage = messages[messages.length - 1];
 
-    // Preserve whatever the user was typing (and cursor focus) across a
-    // background refresh, so polling never erases an unsent reply.
-    const existingInput = document.getElementById('threadReplyInput');
-    const draftText = opts.preserveDraft && existingInput ? existingInput.value : '';
-    const hadFocus = opts.preserveDraft && existingInput && document.activeElement === existingInput;
+    return `
+      <div class="bubble" data-thread-id="${conv.threadId}">
+        ${escapeHtml(original.content)}
+        <span class="time">${formatDate(original.createdAt)}</span>
 
-    // Preserve scroll position unless this is a fresh open of the thread.
-    const existingScroll = document.getElementById('threadScroll');
-    const prevScrollTop = existingScroll ? existingScroll.scrollTop : null;
-    const wasAtBottom = existingScroll
-      ? (existingScroll.scrollHeight - existingScroll.scrollTop - existingScroll.clientHeight < 40)
-      : true;
-
-    panel.innerHTML = `
-      <div class="back-to-list" id="backToList">&larr; Back to conversations</div>
-      <div class="thread-scroll" id="threadScroll">
-        ${messages.map(m => `
-          <div class="msg-row ${m.isMine ? 'mine' : 'theirs'}">
-            <div class="msg-bubble">
-              ${escapeHtml(m.content)}
-              <span class="msg-time">${formatDate(m.createdAt)}</span>
+        <div class="sent-replies">
+          ${replies.map(m => `
+            <div class="reply-block">
+              <span class="reply-label">${m.direction === 'out' ? 'You replied' : 'They replied'}</span>
+              <div class="reply-text">${escapeHtml(m.content)}</div>
             </div>
-          </div>
-        `).join('')}
+          `).join('')}
+        </div>
+
+        <div class="reply-form" data-thread-id="${conv.threadId}" data-reply-to="${lastMessage.id}">
+          <textarea class="reply-input" placeholder="Write a reply..." maxlength="500"></textarea>
+          <button class="reply-btn secondary">Reply</button>
+          <div class="reply-status"></div>
+        </div>
       </div>
-      <div class="thread-composer">
-        <textarea id="threadReplyInput" placeholder="Write a reply..." maxlength="500">${escapeHtml(draftText)}</textarea>
-        <button id="threadReplyBtn" class="secondary">Reply</button>
-      </div>
-      <div class="reply-status" id="threadReplyStatus"></div>
     `;
+  }
 
-    const scrollEl = document.getElementById('threadScroll');
-    if (opts.preserveDraft && prevScrollTop !== null) {
-      // Background refresh: keep the reader where they were, unless they were
-      // already at the bottom (then follow new messages down).
-      scrollEl.scrollTop = wasAtBottom ? scrollEl.scrollHeight : prevScrollTop;
-    } else {
-      scrollEl.scrollTop = scrollEl.scrollHeight;
-    }
+  function attachReplyHandlers() {
+    document.querySelectorAll('.reply-form:not([data-bound])').forEach(form => {
+      form.setAttribute('data-bound', 'true');
+      const threadId = form.getAttribute('data-thread-id');
+      const btn = form.querySelector('.reply-btn');
+      const input = form.querySelector('.reply-input');
+      const status = form.querySelector('.reply-status');
 
-    const replyInput = document.getElementById('threadReplyInput');
-    if (hadFocus) {
-      replyInput.focus();
-      replyInput.selectionStart = replyInput.selectionEnd = replyInput.value.length;
-    }
-
-    document.getElementById('backToList').addEventListener('click', () => {
-      document.getElementById('threadPanel').classList.remove('open');
-      document.getElementById('threadList').classList.remove('hidden-mobile');
-    });
-
-    // Enter sends, Shift+Enter adds a newline — standard chat-app convenience.
-    replyInput.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' && !e.shiftKey) {
-        e.preventDefault();
-        document.getElementById('threadReplyBtn').click();
-      }
-    });
-
-    document.getElementById('threadReplyBtn').addEventListener('click', async () => {
-      const input = document.getElementById('threadReplyInput');
-      const status = document.getElementById('threadReplyStatus');
-      const btn = document.getElementById('threadReplyBtn');
-      const content = input.value.trim();
-      if (!content) {
-        status.textContent = 'Write something before sending.';
-        status.className = 'reply-status show err';
-        return;
-      }
-      btn.disabled = true;
-      btn.textContent = 'Sending...';
-      isReplySending = true;
-      try {
-        const result = await callApi({
-          action: 'reply',
-          userId: session.userId,
-          messageId: lastMessage.id,
-          content: content
-        });
-        if (result.success) {
-          currentMessages.push({
-            id: result.messageId,
-            content: content,
-            createdAt: new Date().toISOString(),
-            parentId: lastMessage.id,
-            isMine: true
+      btn.addEventListener('click', async () => {
+        // Always target this thread's actual latest message, read fresh
+        // off the form's own data attribute at click time — never a value
+        // captured earlier that could have gone stale.
+        const messageId = form.getAttribute('data-reply-to');
+        const content = input.value.trim();
+        if (!content) {
+          status.textContent = 'Write something before sending.';
+          status.className = 'reply-status show err';
+          return;
+        }
+        btn.disabled = true;
+        btn.textContent = 'Sending...';
+        try {
+          const result = await callApi({
+            action: 'reply',
+            userId: session.userId,
+            messageId: messageId,
+            content: content
           });
-          renderThreadPanel(currentMessages);
-          loadThreadList(); // refresh preview text in the sidebar
-        } else {
-          status.textContent = result.message || 'Could not send reply.';
+          if (result.success) {
+            draftText.delete(threadId);
+            input.value = '';
+            status.textContent = 'Reply sent.';
+            status.className = 'reply-status show ok';
+            btn.disabled = false;
+            btn.textContent = 'Reply';
+            // Re-pull this thread from the server so the new reply, and
+            // its updated "last activity" ranking, are both authoritative.
+            await refreshThread(threadId);
+            renderAll();
+          } else {
+            status.textContent = result.message || 'Could not send reply.';
+            status.className = 'reply-status show err';
+            btn.disabled = false;
+            btn.textContent = 'Reply';
+          }
+        } catch (err) {
+          status.textContent = 'Could not reach the server.';
           status.className = 'reply-status show err';
           btn.disabled = false;
           btn.textContent = 'Reply';
         }
-      } catch (err) {
-        status.textContent = 'Could not reach the server.';
-        status.className = 'reply-status show err';
-        btn.disabled = false;
-        btn.textContent = 'Reply';
-      } finally {
-        isReplySending = false;
-      }
+      });
     });
   }
 
@@ -393,11 +314,8 @@ if (!session) {
     }
   }
 
-  loadThreadList();
-  setInterval(() => {
-    loadThreadList();
-    if (openThreadId) openThread(openThreadId, true);
-  }, 10000);
+  loadInbox();
+  setInterval(pollInbox, 10000);
 }
 </script>
 </body>
