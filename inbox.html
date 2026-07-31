@@ -10,6 +10,55 @@
 <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
 <link rel="stylesheet" href="style.css">
+<style>
+  /* ===== Messenger-style additions (kept separate from style.css) ===== */
+  .msgr{ display:flex; gap:16px; align-items:flex-start; }
+  .thread-list{ width:280px; flex-shrink:0; }
+  .thread-item{
+    display:flex; flex-direction:column; gap:2px;
+    padding:12px 14px; border-radius:12px; cursor:pointer;
+    border:1px solid transparent; margin-bottom:6px;
+  }
+  .thread-item:hover{ background:rgba(255,255,255,0.04); }
+  .thread-item.active{ border-color: currentColor; background:rgba(255,255,255,0.06); }
+  .thread-item .t-top{ display:flex; justify-content:space-between; gap:8px; }
+  .thread-item .t-name{ font-weight:600; font-size:13.5px; }
+  .thread-item .t-time{ font-size:11px; opacity:0.6; white-space:nowrap; }
+  .thread-item .t-preview{
+    font-size:12.5px; opacity:0.75;
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+  }
+  .thread-panel{ flex:1; min-width:0; display:flex; flex-direction:column; }
+  .thread-scroll{
+    flex:1; min-height:300px; max-height:60vh; overflow-y:auto;
+    display:flex; flex-direction:column; gap:8px; padding:10px 4px;
+  }
+  .msg-row{ display:flex; }
+  .msg-row.mine{ justify-content:flex-end; }
+  .msg-row.theirs{ justify-content:flex-start; }
+  .msg-bubble{
+    max-width:70%; padding:9px 13px; border-radius:14px;
+    font-size:14px; line-height:1.4; white-space:pre-wrap; word-wrap:break-word;
+  }
+  .msg-row.theirs .msg-bubble{ background:rgba(255,255,255,0.06); border-bottom-left-radius:4px; }
+  .msg-row.mine .msg-bubble{ background:#e8a020; color:#0d1b3e; font-weight:500; border-bottom-right-radius:4px; }
+  .msg-time{ font-size:10px; opacity:0.55; margin-top:3px; display:block; }
+  .thread-composer{ display:flex; gap:8px; margin-top:10px; }
+  .thread-composer textarea{
+    flex:1; resize:none; min-height:42px; max-height:110px;
+    border-radius:10px; padding:10px 12px; font-family:inherit; font-size:14px;
+  }
+  .no-thread-selected{ opacity:0.6; font-size:13.5px; padding:30px 10px; text-align:center; }
+  @media (max-width: 720px){
+    .msgr{ flex-direction:column; }
+    .thread-list{ width:100%; }
+    .thread-panel{ display:none; }
+    .thread-panel.open{ display:flex; }
+    .thread-list.hidden-mobile{ display:none; }
+    .back-to-list{ display:inline-block; margin-bottom:8px; cursor:pointer; font-size:13px; }
+  }
+  .back-to-list{ display:none; }
+</style>
 </head>
 <body>
 <div class="emoji-bg" aria-hidden="true">
@@ -64,8 +113,13 @@
       </div>
     </div>
     <div class="card" style="margin-top:16px;">
-      <div id="inboxList" class="inbox-list">
-        <div class="empty-state">Loading your messages...</div>
+      <div class="msgr">
+        <div class="thread-list" id="threadList">
+          <div class="empty-state">Loading your conversations...</div>
+        </div>
+        <div class="thread-panel" id="threadPanel">
+          <div class="no-thread-selected">Select a conversation to view it.</div>
+        </div>
       </div>
     </div>
     <div class="footer-links">
@@ -104,118 +158,149 @@ if (!session) {
     window.location.href = 'login.html';
   });
 
-  const seenMessageIds = new Set();
+  let openThreadId = null;
+  let threadsByLatest = []; // [{threadId, preview, createdAt}], newest first
 
-  async function loadInbox() {
-    const listEl = document.getElementById('inboxList');
+  // ===== Conversation list (grouped by threadId) =====
+  async function loadThreadList() {
+    const listEl = document.getElementById('threadList');
     try {
       const result = await callApi({ action: 'inbox', userId: session.userId });
-      if (result.success && result.messages.length > 0) {
-        listEl.innerHTML = result.messages.map(m => renderBubble(m)).join('');
-        result.messages.forEach(m => seenMessageIds.add(m.id));
-        attachReplyHandlers();
-      } else if (result.success) {
-        listEl.innerHTML = '<div class="empty-state">No messages yet. Share your link to start receiving anonymous messages.</div>';
-      } else {
+      if (!result.success) {
         listEl.innerHTML = '<div class="empty-state">Could not load your inbox.</div>';
+        return;
       }
+      if (result.messages.length === 0) {
+        listEl.innerHTML = '<div class="empty-state">No messages yet. Share your link to start receiving anonymous messages.</div>';
+        return;
+      }
+
+      // Inbox is already newest-first, so the first message we see per
+      // threadId is that thread's latest preview.
+      const seen = new Set();
+      threadsByLatest = [];
+      result.messages.forEach(m => {
+        if (!seen.has(m.threadId)) {
+          seen.add(m.threadId);
+          threadsByLatest.push({ threadId: m.threadId, preview: m.content, createdAt: m.createdAt });
+        }
+      });
+
+      renderThreadList();
     } catch (err) {
       listEl.innerHTML = '<div class="empty-state">Could not reach the server.</div>';
     }
   }
 
-  async function pollInbox() {
+  function renderThreadList() {
+    const listEl = document.getElementById('threadList');
+    listEl.innerHTML = threadsByLatest.map(t => `
+      <div class="thread-item ${t.threadId === openThreadId ? 'active' : ''}" data-thread-id="${t.threadId}">
+        <div class="t-top">
+          <span class="t-name">Conversation</span>
+          <span class="t-time">${formatDate(t.createdAt)}</span>
+        </div>
+        <div class="t-preview">${escapeHtml(t.preview)}</div>
+      </div>
+    `).join('');
+
+    listEl.querySelectorAll('.thread-item').forEach(el => {
+      el.addEventListener('click', () => openThread(el.getAttribute('data-thread-id')));
+    });
+  }
+
+  // ===== Full conversation view =====
+  async function openThread(threadId) {
+    openThreadId = threadId;
+    renderThreadList(); // refresh active highlight
+    document.getElementById('threadPanel').classList.add('open');
+
+    const panel = document.getElementById('threadPanel');
+    panel.innerHTML = '<div class="no-thread-selected">Loading conversation...</div>';
+
     try {
-      const result = await callApi({ action: 'inbox', userId: session.userId });
-      if (!result.success) return;
-
-      const newMessages = result.messages.filter(m => !seenMessageIds.has(m.id));
-      if (newMessages.length === 0) return;
-
-      const listEl = document.getElementById('inboxList');
-      const emptyState = listEl.querySelector('.empty-state');
-      if (emptyState) emptyState.remove();
-
-      newMessages.forEach(m => {
-        listEl.insertAdjacentHTML('afterbegin', renderBubble(m));
-        seenMessageIds.add(m.id);
-      });
-      attachReplyHandlers();
+      const result = await callApi({ action: 'thread', userId: session.userId, threadId: threadId });
+      if (!result.success) {
+        panel.innerHTML = '<div class="no-thread-selected">Could not load this conversation.</div>';
+        return;
+      }
+      renderThreadPanel(result.messages);
     } catch (err) {
-      // silent fail — just try again next tick
+      panel.innerHTML = '<div class="no-thread-selected">Could not reach the server.</div>';
     }
   }
 
-  // Every inbox item can always be replied to — replies are just new messages
-  // sent back to whoever sent this one, so the conversation can go back and forth.
-  function renderBubble(m) {
-    return `
-      <div class="bubble" data-message-id="${m.id}">
-        ${escapeHtml(m.content)}
-        <span class="time">${formatDate(m.createdAt)}</span>
+  function renderThreadPanel(messages) {
+    const panel = document.getElementById('threadPanel');
+    const lastMessage = messages[messages.length - 1];
 
-        <div class="sent-replies"></div>
-
-        <div class="reply-form" data-message-id="${m.id}">
-          <textarea class="reply-input" placeholder="Write a reply..." maxlength="500"></textarea>
-          <button class="reply-btn secondary">Reply</button>
-          <div class="reply-status"></div>
-        </div>
+    panel.innerHTML = `
+      <div class="back-to-list" id="backToList">&larr; Back to conversations</div>
+      <div class="thread-scroll" id="threadScroll">
+        ${messages.map(m => `
+          <div class="msg-row ${m.isMine ? 'mine' : 'theirs'}">
+            <div class="msg-bubble">
+              ${escapeHtml(m.content)}
+              <span class="msg-time">${formatDate(m.createdAt)}</span>
+            </div>
+          </div>
+        `).join('')}
       </div>
+      <div class="thread-composer">
+        <textarea id="threadReplyInput" placeholder="Write a reply..." maxlength="500"></textarea>
+        <button id="threadReplyBtn" class="secondary">Reply</button>
+      </div>
+      <div class="reply-status" id="threadReplyStatus"></div>
     `;
-  }
 
-  function attachReplyHandlers() {
-    document.querySelectorAll('.reply-form:not([data-bound])').forEach(form => {
-      form.setAttribute('data-bound', 'true');
-      const messageId = form.getAttribute('data-message-id');
-      const btn = form.querySelector('.reply-btn');
-      const input = form.querySelector('.reply-input');
-      const status = form.querySelector('.reply-status');
+    const scrollEl = document.getElementById('threadScroll');
+    scrollEl.scrollTop = scrollEl.scrollHeight;
 
-      btn.addEventListener('click', async () => {
-        const content = input.value.trim();
-        if (!content) {
-          status.textContent = 'Write something before sending.';
-          status.className = 'reply-status show err';
-          return;
-        }
-        btn.disabled = true;
-        btn.textContent = 'Sending...';
-        try {
-          const result = await callApi({
-            action: 'reply',
-            userId: session.userId,
-            messageId: messageId,
-            content: content
+    document.getElementById('backToList').addEventListener('click', () => {
+      document.getElementById('threadPanel').classList.remove('open');
+    });
+
+    document.getElementById('threadReplyBtn').addEventListener('click', async () => {
+      const input = document.getElementById('threadReplyInput');
+      const status = document.getElementById('threadReplyStatus');
+      const btn = document.getElementById('threadReplyBtn');
+      const content = input.value.trim();
+      if (!content) {
+        status.textContent = 'Write something before sending.';
+        status.className = 'reply-status show err';
+        return;
+      }
+      btn.disabled = true;
+      btn.textContent = 'Sending...';
+      try {
+        const result = await callApi({
+          action: 'reply',
+          userId: session.userId,
+          messageId: lastMessage.id,
+          content: content
+        });
+        if (result.success) {
+          messages.push({
+            id: result.messageId,
+            content: content,
+            createdAt: new Date().toISOString(),
+            parentId: lastMessage.id,
+            isMine: true
           });
-          if (result.success) {
-            const bubble = form.closest('.bubble');
-            const sentRepliesEl = bubble.querySelector('.sent-replies');
-            sentRepliesEl.insertAdjacentHTML('beforeend', `
-              <div class="reply-block">
-                <span class="reply-label">You replied</span>
-                <div class="reply-text">${escapeHtml(content)}</div>
-              </div>
-            `);
-            status.textContent = 'Reply sent.';
-            status.className = 'reply-status show ok';
-            input.value = '';
-            btn.disabled = false;
-            btn.textContent = 'Reply';
-          } else {
-            status.textContent = result.message || 'Could not send reply.';
-            status.className = 'reply-status show err';
-            btn.disabled = false;
-            btn.textContent = 'Reply';
-          }
-        } catch (err) {
-          status.textContent = 'Could not reach the server.';
+          renderThreadPanel(messages);
+          loadThreadList(); // refresh preview text in the sidebar
+        } else {
+          status.textContent = result.message || 'Could not send reply.';
           status.className = 'reply-status show err';
           btn.disabled = false;
           btn.textContent = 'Reply';
         }
-      });
+      } catch (err) {
+        status.textContent = 'Could not reach the server.';
+        status.className = 'reply-status show err';
+        btn.disabled = false;
+        btn.textContent = 'Reply';
+      }
     });
   }
 
@@ -232,8 +317,12 @@ if (!session) {
       return '';
     }
   }
-  loadInbox();
-  setInterval(pollInbox, 10000);
+
+  loadThreadList();
+  setInterval(() => {
+    loadThreadList();
+    if (openThreadId) openThread(openThreadId);
+  }, 10000);
 }
 </script>
 </body>
