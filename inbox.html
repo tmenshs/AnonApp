@@ -58,6 +58,10 @@
     .back-to-list{ display:inline-block; margin-bottom:8px; cursor:pointer; font-size:13px; }
   }
   .back-to-list{ display:none; }
+  .thread-item .t-unread-dot{
+    display:inline-block; width:7px; height:7px; border-radius:50%;
+    background: var(--accent, #00D9B5); margin-left:6px; flex-shrink:0;
+  }
 </style>
 </head>
 <body>
@@ -160,18 +164,25 @@ if (!session) {
 
   let openThreadId = null;
   let threadsByLatest = []; // [{threadId, preview, createdAt}], newest first
+  let currentMessages = [];  // messages currently rendered for the open thread
+  let isReplySending = false; // guards against polling clobbering the UI mid-send
 
   // ===== Conversation list (grouped by threadId) =====
   async function loadThreadList() {
     const listEl = document.getElementById('threadList');
+    const isFirstLoad = threadsByLatest.length === 0;
+    if (isFirstLoad) {
+      listEl.innerHTML = '<div class="empty-state">Loading your conversations...</div>';
+    }
     try {
       const result = await callApi({ action: 'inbox', userId: session.userId });
       if (!result.success) {
-        listEl.innerHTML = '<div class="empty-state">Could not load your inbox.</div>';
+        if (isFirstLoad) listEl.innerHTML = '<div class="empty-state">Could not load your inbox.</div>';
         return;
       }
       if (result.messages.length === 0) {
         listEl.innerHTML = '<div class="empty-state">No messages yet. Share your link to start receiving anonymous messages.</div>';
+        threadsByLatest = [];
         return;
       }
 
@@ -188,7 +199,7 @@ if (!session) {
 
       renderThreadList();
     } catch (err) {
-      listEl.innerHTML = '<div class="empty-state">Could not reach the server.</div>';
+      if (isFirstLoad) listEl.innerHTML = '<div class="empty-state">Could not reach the server.</div>';
     }
   }
 
@@ -210,29 +221,69 @@ if (!session) {
   }
 
   // ===== Full conversation view =====
-  async function openThread(threadId) {
+  // backgroundRefresh = true means this call came from the polling timer, not a
+  // user click — so we must never blow away an in-progress draft or reset scroll
+  // unless the conversation actually has new content.
+  async function openThread(threadId, backgroundRefresh = false) {
+    const isSwitchingThread = openThreadId !== threadId;
     openThreadId = threadId;
+
+    // Don't touch the DOM for a background refresh while the user is mid-send.
+    if (backgroundRefresh && isReplySending) return;
+
     renderThreadList(); // refresh active highlight
     document.getElementById('threadPanel').classList.add('open');
+    document.getElementById('threadList').classList.add('hidden-mobile');
 
     const panel = document.getElementById('threadPanel');
-    panel.innerHTML = '<div class="no-thread-selected">Loading conversation...</div>';
+    if (!backgroundRefresh || isSwitchingThread) {
+      panel.innerHTML = '<div class="no-thread-selected">Loading conversation...</div>';
+    }
 
     try {
       const result = await callApi({ action: 'thread', userId: session.userId, threadId: threadId });
       if (!result.success) {
-        panel.innerHTML = '<div class="no-thread-selected">Could not load this conversation.</div>';
+        if (!backgroundRefresh) panel.innerHTML = '<div class="no-thread-selected">Could not load this conversation.</div>';
         return;
       }
-      renderThreadPanel(result.messages);
+
+      // Skip re-render entirely if nothing changed and this is just a background
+      // poll — this is what stops the reply textarea from being wiped while typing.
+      if (backgroundRefresh && !isSwitchingThread && sameMessages(currentMessages, result.messages)) {
+        return;
+      }
+
+      currentMessages = result.messages;
+      renderThreadPanel(currentMessages, { preserveDraft: backgroundRefresh });
     } catch (err) {
-      panel.innerHTML = '<div class="no-thread-selected">Could not reach the server.</div>';
+      if (!backgroundRefresh) panel.innerHTML = '<div class="no-thread-selected">Could not reach the server.</div>';
     }
   }
 
-  function renderThreadPanel(messages) {
+  function sameMessages(a, b) {
+    if (a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i++) {
+      if (a[i].id !== b[i].id) return false;
+    }
+    return true;
+  }
+
+  function renderThreadPanel(messages, opts = {}) {
     const panel = document.getElementById('threadPanel');
     const lastMessage = messages[messages.length - 1];
+
+    // Preserve whatever the user was typing (and cursor focus) across a
+    // background refresh, so polling never erases an unsent reply.
+    const existingInput = document.getElementById('threadReplyInput');
+    const draftText = opts.preserveDraft && existingInput ? existingInput.value : '';
+    const hadFocus = opts.preserveDraft && existingInput && document.activeElement === existingInput;
+
+    // Preserve scroll position unless this is a fresh open of the thread.
+    const existingScroll = document.getElementById('threadScroll');
+    const prevScrollTop = existingScroll ? existingScroll.scrollTop : null;
+    const wasAtBottom = existingScroll
+      ? (existingScroll.scrollHeight - existingScroll.scrollTop - existingScroll.clientHeight < 40)
+      : true;
 
     panel.innerHTML = `
       <div class="back-to-list" id="backToList">&larr; Back to conversations</div>
@@ -247,17 +298,38 @@ if (!session) {
         `).join('')}
       </div>
       <div class="thread-composer">
-        <textarea id="threadReplyInput" placeholder="Write a reply..." maxlength="500"></textarea>
+        <textarea id="threadReplyInput" placeholder="Write a reply..." maxlength="500">${escapeHtml(draftText)}</textarea>
         <button id="threadReplyBtn" class="secondary">Reply</button>
       </div>
       <div class="reply-status" id="threadReplyStatus"></div>
     `;
 
     const scrollEl = document.getElementById('threadScroll');
-    scrollEl.scrollTop = scrollEl.scrollHeight;
+    if (opts.preserveDraft && prevScrollTop !== null) {
+      // Background refresh: keep the reader where they were, unless they were
+      // already at the bottom (then follow new messages down).
+      scrollEl.scrollTop = wasAtBottom ? scrollEl.scrollHeight : prevScrollTop;
+    } else {
+      scrollEl.scrollTop = scrollEl.scrollHeight;
+    }
+
+    const replyInput = document.getElementById('threadReplyInput');
+    if (hadFocus) {
+      replyInput.focus();
+      replyInput.selectionStart = replyInput.selectionEnd = replyInput.value.length;
+    }
 
     document.getElementById('backToList').addEventListener('click', () => {
       document.getElementById('threadPanel').classList.remove('open');
+      document.getElementById('threadList').classList.remove('hidden-mobile');
+    });
+
+    // Enter sends, Shift+Enter adds a newline — standard chat-app convenience.
+    replyInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        document.getElementById('threadReplyBtn').click();
+      }
     });
 
     document.getElementById('threadReplyBtn').addEventListener('click', async () => {
@@ -272,6 +344,7 @@ if (!session) {
       }
       btn.disabled = true;
       btn.textContent = 'Sending...';
+      isReplySending = true;
       try {
         const result = await callApi({
           action: 'reply',
@@ -280,14 +353,14 @@ if (!session) {
           content: content
         });
         if (result.success) {
-          messages.push({
+          currentMessages.push({
             id: result.messageId,
             content: content,
             createdAt: new Date().toISOString(),
             parentId: lastMessage.id,
             isMine: true
           });
-          renderThreadPanel(messages);
+          renderThreadPanel(currentMessages);
           loadThreadList(); // refresh preview text in the sidebar
         } else {
           status.textContent = result.message || 'Could not send reply.';
@@ -300,6 +373,8 @@ if (!session) {
         status.className = 'reply-status show err';
         btn.disabled = false;
         btn.textContent = 'Reply';
+      } finally {
+        isReplySending = false;
       }
     });
   }
@@ -321,7 +396,7 @@ if (!session) {
   loadThreadList();
   setInterval(() => {
     loadThreadList();
-    if (openThreadId) openThread(openThreadId);
+    if (openThreadId) openThread(openThreadId, true);
   }, 10000);
 }
 </script>
