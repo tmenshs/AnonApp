@@ -129,6 +129,8 @@ if (!session) {
         ${escapeHtml(m.content)}
         <span class="time">${formatDate(m.createdAt)}</span>
 
+        <div class="sent-replies"></div>
+
         <div class="reply-form" data-message-id="${m.id}">
           <textarea class="reply-input" placeholder="Write a reply..." maxlength="500"></textarea>
           <button class="reply-btn secondary">Reply</button>
@@ -162,6 +164,14 @@ if (!session) {
             content: content
           });
           if (result.success) {
+            const bubble = form.closest('.bubble');
+            const sentRepliesEl = bubble.querySelector('.sent-replies');
+            sentRepliesEl.insertAdjacentHTML('beforeend', `
+              <div class="reply-block">
+                <span class="reply-label">You replied</span>
+                <div class="reply-text">${escapeHtml(content)}</div>
+              </div>
+            `);
             status.textContent = 'Reply sent.';
             status.className = 'reply-status show ok';
             input.value = '';
